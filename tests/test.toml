@@ -1,0 +1,12 @@
+[global]
+pid_file = imp.pid
+log = true
+log_file = Bonjour
+
+[[vhosts]]
+ip = 127.0.0.1
+port = 8080
+root_dir = Sole
+server_name = antoine
+default_file = bonjour.txt
+

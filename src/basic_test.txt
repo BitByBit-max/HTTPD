@@ -1,0 +1,6 @@
+GET /index.html HTTP/1.1
+Host: 127.0.0.1:8080
+Content-length: 25
+Connection: close
+
+This is a simple request

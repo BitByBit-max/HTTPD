@@ -1,0 +1,121 @@
+#include <errno.h>
+#include <stdio.h>
+#include <string.h>
+
+#include "parsers.h"
+#include "response.h"
+
+static char *get_status(char *err_code)
+{
+    if (!strcmp(err_code, "400"))
+        return "HTTP/1.1 400 ERROR\r\n";
+    else if (!strcmp(err_code, "405"))
+        return "HTTP/1.1 405 ERROR\r\n";
+    else if (!strcmp(err_code, "403"))
+        return "HTTP/1.1 403 ERROR\r\n";
+    else if (!strcmp(err_code, "404"))
+        return "HTTP/1.1 404 ERROR\r\n";
+    else if (!strcmp(err_code, "505"))
+        return "HTTP/1.1 505 ERROR\r\n";
+    return NULL;
+}
+
+static char *get_target(struct token *request, char *root_dir)
+{
+    char *target = get_token(request, GET);
+    if (!target)
+        target = get_token(request, HEAD);
+    if (!target)
+        target = get_token(request, UNKNOWN);
+    if (!strncmp("http://", target, 7))
+        target += 7;
+    char *tmp = NULL;
+    char *theader = target;
+    if (*target != '/')
+    {
+        strtok_r(target, "/", &tmp);
+        theader = tmp ? my_concat("/", tmp) : "/";
+    }
+    struct stat s;
+    if (!stat(target, &s))
+    {
+        if (s.st_mode & S_IFDIR)
+        {
+            char *df = get_token(request, DEFAULT_FILE);
+            if (!df)
+                df = "index.html";
+            theader = my_concat(theader, df);
+        }
+    }
+    theader = my_concat(root_dir, theader);
+    return theader;
+}
+
+static char *get_time(void)
+{
+    char *gmt1 = get_date();
+    char *gmt2 = my_concat(gmt1, "\r\n");
+    free(gmt1);
+    return gmt2;
+}
+
+static void send_headers(int sfd, struct token *request, int len)
+{
+    char *date = get_time();
+    send(sfd, date, strlen(date), 0);
+    free(date);
+    char *len_str = malloc(sizeof(char) * 500);
+    len_str = my_itoa(len, len_str);
+    char *content_len = "Content-Length: ";
+    content_len = my_concat(content_len, len_str);
+    char *content_len2 = content_len;
+    content_len2 = my_concat(content_len2, "\r\n");
+    free(len_str);
+    send(sfd, content_len2, strlen(content_len2), 0);
+    free(content_len);
+    free(content_len2);
+    char *connection = get_token(request, CONNECTION);
+    char *cheader = "Connection: ";
+    connection = connection ? connection : "close";
+    cheader = my_concat(cheader, connection);
+    char *cheader2 = cheader;
+    cheader2 = my_concat(cheader2, "\r\n");
+    send(sfd, cheader2, strlen(cheader2), 0);
+    free(cheader);
+    free(cheader2);
+    send(sfd, "\r\n", 2, 0);
+}
+
+int respond(int sfd, struct token *request, char *root_dir)
+{
+    enum my_key_t e = get_token(request, ERROR) != NULL ? ERROR : UNKNOWN;
+    char *e_val = get_token(request, e);
+    struct token *err = NULL;
+    if (e_val)
+        err = init_err(e_val, e);
+    char *target = get_target(request, root_dir);
+    struct stat s;
+    int len = 0;
+    // int perm = 0;
+    errno = 0;
+    if (!stat(target, &s))
+        len = s.st_size;
+    else
+        err = init_err("404", ERROR);
+    if (errno == EACCES && !err)
+        err = init_err("403", ERROR);
+    char *status = "HTTP/1.1 200 OK\r\n";
+    if (err)
+        status = get_status(err->value);
+    send(sfd, status, strlen(status), 0);
+    send_headers(sfd, request, len);
+    if (get_token(request, GET))
+    {
+        int fd = open(target, O_RDONLY);
+        if (my_sendfile(sfd, fd, len) == -1)
+            log_others("my_sendfile failed");
+        close(fd);
+    }
+    free(target);
+    return 0;
+}
